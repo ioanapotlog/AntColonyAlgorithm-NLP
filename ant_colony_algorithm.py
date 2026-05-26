@@ -26,7 +26,7 @@ E0 = 30         # initial quantity of energy on each node
 OMEGA = 25      # ant life span
 LV = 100        # odour vector length
 DELTA_V = 0.9   # percentage of the odour vector components deposited by an ant when it arrives on a node
-C_AC = 100      # number of cycles of the simulation
+C_AC = 50      # number of cycles of the simulation
 THETA = 1.0     # quantity of deposited pheromone
 NUM_RUNS = 3    # number of independent executions for majority voting
 
@@ -47,12 +47,15 @@ def load_semeval_xml(xml_path):
                     "word": word.lower(),
                     "id": element.attrib.get("id"),
                     "lemma": element.attrib.get("lemma"),
-                    "pos": element.attrib.get("pos")
+                    "pos": element.attrib.get("pos"),
+                    "tag": element.tag
                 })
+
             if sentence_words:
                 text_sentences.append(sentence_words)
         if text_sentences:
             texts.append(text_sentences)
+
     return texts
 
 def load_gold_key(key_path):
@@ -70,8 +73,17 @@ def load_gold_key(key_path):
                 sense_keys.append(p)
             if sense_keys:
                 gold[instance_id] = sense_keys
+
     return gold
 
+def filter_gold_by_text(gold, text_id):
+    filtered_gold = {}
+
+    for instance_id, sense_keys in gold.items():
+        if instance_id.startswith(text_id + "."):
+            filtered_gold[instance_id] = sense_keys
+
+    return filtered_gold
 
 # CLASSES
 class Node:
@@ -178,10 +190,26 @@ def get_word_id(word):
     if word not in word_to_id:
         word_to_id[word] = next_word_id
         next_word_id = next_word_id + 1
+
     return word_to_id[word]
 
+# def tokenize_definition(text):
+#     return [token.lower() for token in word_tokenize(text) if token.isalpha()]
+
+STOPWORDS = {
+    "the", "a", "an", "is", "are", "was", "were",
+    "to", "of", "and", "or", "in", "on", "at",
+    "by", "for", "with", "this", "that", "be",
+    "been", "being", "as", "it"
+}
+
 def tokenize_definition(text):
-    return [token.lower() for token in word_tokenize(text) if token.isalpha()]
+    return [
+        token.lower()
+        for token in word_tokenize(text)
+        if token.isalpha()
+        and token.lower() not in STOPWORDS
+    ]
 
 def get_extended_definition_words(synset):
     words = []
@@ -196,11 +224,13 @@ def get_extended_definition_words(synset):
     )
     for related in related_synsets:
         words.extend(tokenize_definition(related.definition()))
+
     return words
 
 def build_odour_vector(synset):
     words = get_extended_definition_words(synset)
     vector = sorted({get_word_id(word) for word in words})
+
     return vector[:LV]
 
 _lesk_nest_cache = {}
@@ -216,6 +246,7 @@ def ext_lesk_nests(nest_vector1, nest_vector2):
         return cached
     result = len(set(nest_vector1).intersection(set(nest_vector2)))
     _lesk_nest_cache[key] = result
+
     return result
 
 
@@ -226,6 +257,7 @@ def penn_to_wordnet_pos(tag):
     if tag.startswith("V"): return wn.VERB
     if tag.startswith("J"): return wn.ADJ
     if tag.startswith("R"): return wn.ADV
+
     return None
 
 def semeval_pos_to_wordnet_pos(pos):
@@ -235,20 +267,29 @@ def semeval_pos_to_wordnet_pos(pos):
     if pos.startswith("v"): return wn.VERB
     if pos.startswith("j") or pos.startswith("a"): return wn.ADJ
     if pos.startswith("r"): return wn.ADV
+
     return None
 
 def preprocess_semeval_text(semeval_text):
     processed_sentences = []
+
     for sentence in semeval_text:
         processed_sentence = []
+
         for item in sentence:
+            if item["tag"] != "instance":
+                continue
+
             word = item["lemma"] if item["lemma"] else item["word"]
+
             wn_pos = semeval_pos_to_wordnet_pos(item["pos"])
             if wn_pos is None:
                 continue
+
             synsets = wn.synsets(word.lower(), pos=wn_pos)
             if not synsets:
                 continue
+
             processed_sentence.append({
                 "word": word.lower(),
                 "id": item["id"],
@@ -257,6 +298,7 @@ def preprocess_semeval_text(semeval_text):
             })
         if processed_sentence:
             processed_sentences.append(processed_sentence)
+
     return processed_sentences
 
 def preprocess_text(text):
@@ -282,6 +324,7 @@ def preprocess_text(text):
             })
         if processed_sentence:
             processed_sentences.append(processed_sentence)
+
     return processed_sentences
 
 
@@ -299,7 +342,8 @@ class GraphBuilder:
     def create_node(self, node_type, label=None):
         node = Node(self.node_counter, node_type, label)
         self.nodes[self.node_counter] = node
-        self.node_counter = self.node_counter +1
+        self.node_counter = self.node_counter + 1
+
         return node
 
     def create_nest(self, synset, word, instance_id=None):
@@ -307,6 +351,7 @@ class GraphBuilder:
         nest.odour_vector = build_odour_vector(synset)
         self.nodes[self.node_counter] = nest
         self.node_counter = self.node_counter + 1
+
         return nest
 
     def connect(self, node1, node2):
@@ -317,6 +362,7 @@ class GraphBuilder:
 
         key = (min(node1.id, node2.id), max(node1.id, node2.id))
         self.edge_map[key] = edge
+
         return edge
 
     def build_graph(self, processed_sentences):
@@ -340,6 +386,7 @@ class GraphBuilder:
                     nest = self.create_nest(synset, word, instance_id)
                     self.connect(word_node, nest)
                     self.word_to_nests[word_node.id]["nests"].append(nest)
+
         return {
             "nodes": self.nodes,
             "edges": self.edges,
@@ -367,6 +414,7 @@ class AntColony:
 
     def get_edge(self, node1, node2):
         key = (min(node1.id, node2.id), max(node1.id, node2.id))
+
         return self.edge_map.get(key, None)
 
     def create_bridge(self, nest1, nest2):
@@ -380,6 +428,7 @@ class AntColony:
         nest2.add_neighbor(nest1)
         key = (min(nest1.id, nest2.id), max(nest1.id, nest2.id))
         self.edge_map[key] = bridge
+
         return bridge
 
     def remove_collapsed_bridges(self):
@@ -433,22 +482,26 @@ class AntColony:
 
     def should_return_home(self, ant):
         probability = ant.energy / EMAX
+
         return random.random() < probability
 
     def evaluate_explore_transition(self, node, edge, neighbors):
         total_energy = sum(neighbor.energy for neighbor in neighbors) + 1e-9
         node_score = node.energy / total_energy
         edge_score = max(0, 1 - edge.pheromone)
+
         return node_score + edge_score
 
     def _lesk_with_mother(self, node, mother_nest):
         if node.type == "nest":
             return ext_lesk_nests(node.odour_vector, mother_nest.odour_vector)
+        
         return ext_lesk(node.odour_vector, mother_nest.odour_vector)
 
     def evaluate_return_transition(self, edge, similarity, total_similarity):
         node_score = similarity / total_similarity
         edge_score = edge.pheromone
+
         return node_score + edge_score
 
     def choose_next_node(self, ant):
@@ -579,6 +632,7 @@ class AntColony:
                 "definition": best_nest.definition,
                 "energy": best_nest.energy
             }
+
         return configuration
 
     def compute_global_score(self, configuration):
@@ -594,6 +648,7 @@ class AntColony:
         for i in range(len(selected_nests)):
             for j in range(i + 1, len(selected_nests)):
                 score = score + ext_lesk_nests(selected_nests[i].odour_vector, selected_nests[j].odour_vector)
+
         return score
 
     def update_best_configuration(self):
@@ -616,6 +671,7 @@ class AntColony:
                 self.try_create_bridge(ant)
             self.evaporate_pheromones()
             self.update_best_configuration()
+
         return self.best_configuration
 
 
@@ -713,51 +769,56 @@ if __name__ == "__main__":
     semeval_texts = load_semeval_xml(xml_path)
     gold = load_gold_key(key_path)
 
-    # processed_sentences = []
+    all_voted_results = {}
 
-    # for semeval_text in semeval_texts:
-    #     text_sentences = preprocess_semeval_text(semeval_text)
-    #     processed_sentences.extend(text_sentences)
+    for text_index, semeval_text in enumerate(semeval_texts):
+        text_id = f"d{text_index + 1:03d}"
 
-    processed_sentences = preprocess_semeval_text(semeval_texts[0])
+        print("\n" + "=" * 50)
+        print(f"Processing text {text_id}")
+        print("=" * 50)
 
-    all_results = []
+        processed_sentences = preprocess_semeval_text(semeval_text)
 
-    for run_index in range(NUM_RUNS):
-        print(f"\nRun {run_index + 1}/{NUM_RUNS}")
-        print(f"==============================")
+        text_run_results = []
 
-        print("Building graph...")
-        graph_builder = GraphBuilder()
-        graph_data = graph_builder.build_graph(processed_sentences)
-        print(f"Graph built: {len(graph_data['nodes'])} nodes, {len(graph_data['edges'])} edges")
+        for run_index in range(NUM_RUNS):
+            print(f"\nRun {run_index + 1}/{NUM_RUNS}")
 
-        print("Running ant colony...")
-        colony = AntColony(graph_data)
-        result = colony.run()
-        all_results.append(result)
+            print("Building graph...")
+            graph_builder = GraphBuilder()
+            graph_data = graph_builder.build_graph(processed_sentences)
 
-        run_metrics = evaluate_with_gold(result, gold)
+            print(f"Graph built: {len(graph_data['nodes'])} nodes, {len(graph_data['edges'])} edges")
 
-        print("Run best global score:", colony.best_score)
-        print("Run number of nodes:", len(graph_data["nodes"]))
-        print("Run number of edges:", len(graph_data["edges"]))
-        print("Run number of ants created:", colony.ant_counter)
-        print("Run F1:", round(run_metrics["f1"], 4))
+            print("Running ant colony...")
+            colony = AntColony(graph_data)
+            result = colony.run()
 
-    result = majority_vote_results(all_results)
+            text_run_results.append(result)
 
-    print("\nFirst 20 selected senses after majority voting:\n")
-    for _, data in list(result.items())[:20]:
-        print(f"ID: {data['instance_id']}")
-        print(f"Word: {data['word']}")
-        print(f"Sense: {data['synset'].name()}")
-        print(f"Definition: {data['definition']}")
-        print("-" * 50)
+            print("Run best global score:", colony.best_score)
+            print("Run number of ants created:", colony.ant_counter)
 
-    metrics = evaluate_with_gold(result, gold)
+        voted_result = majority_vote_results(text_run_results)
 
-    print("\nEvaluation after majority voting:")
+        all_voted_results.update(voted_result)
+
+        text_gold = filter_gold_by_text(gold, text_id)
+        text_metrics = evaluate_with_gold(voted_result, text_gold)
+
+        print("\nText evaluation after majority voting:")
+        print("Total gold:", text_metrics["total_gold"])
+        print("Total predicted:", text_metrics["total_predicted"])
+        print("Correct:", text_metrics["correct"])
+        print("F1:", round(text_metrics["f1"], 4))
+
+    print("\n" + "=" * 50)
+    print("METRICS")
+    print("=" * 50)
+
+    metrics = evaluate_with_gold(all_voted_results, gold)
+
     print("Total gold:", metrics["total_gold"])
     print("Total predicted:", metrics["total_predicted"])
     print("Correct:", metrics["correct"])
