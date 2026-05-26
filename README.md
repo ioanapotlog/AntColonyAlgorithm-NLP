@@ -4,8 +4,18 @@ This project implements a biologically inspired **Ant Colony Optimization (ACO)*
 
 The implementation is inspired by the paper:
 
-> *Ant Colony Algorithm for the Unsupervised Word Sense Disambiguation of Texts: Comparison and Evaluation*  
+> [*Ant Colony Algorithm for the Unsupervised Word Sense Disambiguation of Texts: Comparison and Evaluation*](https://aclanthology.org/C12-1146/)  
 > by Didier SCHWAB, Jérôme GOULIAN, Andon TCHECHMEDJIEV and Hervé BLANCHON
+
+## About the Algorithm
+
+The algorithm models Word Sense Disambiguation as a collective ant colony behavior problem.
+
+Each possible meaning of a word is represented as a nest node in a semantic graph built from the text and WordNet synsets. Artificial ants explore the graph, collect energy, deposit pheromones and propagate semantic odour vectors extracted from dictionary definitions and related concepts.
+
+During exploration, ants dynamically create semantic bridges between compatible word senses using Extended Lesk similarity. Over multiple simulation cycles, pheromone reinforcement and collective ant behavior allow the system to converge toward the most semantically coherent interpretation of the text.
+
+The final predicted senses are selected using majority voting across multiple independent executions of the algorithm.
 
 ## Results
 
