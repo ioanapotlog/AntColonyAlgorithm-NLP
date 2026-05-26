@@ -7,6 +7,7 @@ from nltk.tokenize import sent_tokenize, word_tokenize
 from nltk import pos_tag
 
 import xml.etree.ElementTree as ET
+from collections import Counter
 
 # NLTK DOWNLOADS
 nltk.download("punkt", quiet=True)
@@ -27,6 +28,7 @@ LV = 100        # odour vector length
 DELTA_V = 0.9   # percentage of the odour vector components deposited by an ant when it arrives on a node
 C_AC = 100      # number of cycles of the simulation
 THETA = 1.0     # quantity of deposited pheromone
+NUM_RUNS = 3    # number of independent executions for majority voting
 
 
 def load_semeval_xml(xml_path):
@@ -124,7 +126,7 @@ class Edge:
         self.pheromone = self.pheromone + quantity
 
     def evaporate(self, delta):
-        self.pheromone *= (1 - delta)
+        self.pheromone = self.pheromone * (1 - delta)
         if self.pheromone < 0:
             self.pheromone = 0
 
@@ -666,6 +668,42 @@ def evaluate_with_gold(result, gold):
         "f1": f1
     }
 
+
+def majority_vote_results(all_results):
+    predictions_by_instance = {}
+    metadata_by_instance = {}
+
+    for result in all_results:
+        for _, data in result.items():
+            instance_id = data["instance_id"]
+
+            if instance_id is None:
+                continue
+
+            if instance_id not in predictions_by_instance:
+                predictions_by_instance[instance_id] = []
+                metadata_by_instance[instance_id] = {
+                    "word": data["word"],
+                    "instance_id": instance_id
+                }
+
+            predictions_by_instance[instance_id].append(data["synset"])
+
+    voted_result = {}
+
+    for instance_id, predicted_synsets in predictions_by_instance.items():
+        most_common_synset = Counter(predicted_synsets).most_common(1)[0][0]
+
+        voted_result[instance_id] = {
+            "word": metadata_by_instance[instance_id]["word"],
+            "instance_id": instance_id,
+            "synset": most_common_synset,
+            "definition": most_common_synset.definition(),
+            "energy": None
+        }
+
+    return voted_result
+
 # MAIN
 
 if __name__ == "__main__":
@@ -675,61 +713,51 @@ if __name__ == "__main__":
     semeval_texts = load_semeval_xml(xml_path)
     gold = load_gold_key(key_path)
 
-    # processed_sentences = preprocess_semeval_text(semeval_texts[0])
+    # processed_sentences = []
 
-    # limited_sentences = []
-    # word_count = 0
-    # for sentence in processed_sentences:
-    #     new_sentence = []
-    #     for word_data in sentence:
-    #         # if word_count >= 500:
-    #         #     break
-    #         new_sentence.append(word_data)
-    #         word_count = word_count + 1
-    #     if new_sentence:
-    #         limited_sentences.append(new_sentence)
-    #     # if word_count >= 500:
-    #     #     break
+    # for semeval_text in semeval_texts:
+    #     text_sentences = preprocess_semeval_text(semeval_text)
+    #     processed_sentences.extend(text_sentences)
 
-    # processed_sentences = limited_sentences
+    processed_sentences = preprocess_semeval_text(semeval_texts[0])
 
-    processed_sentences = []
+    all_results = []
 
-    for semeval_text in semeval_texts:
-        text_sentences = preprocess_semeval_text(semeval_text)
-        processed_sentences.extend(text_sentences)
+    for run_index in range(NUM_RUNS):
+        print(f"\nRun {run_index + 1}/{NUM_RUNS}")
+        print(f"==============================")
 
-    print("Building graph...")
-    graph_builder = GraphBuilder()
-    graph_data = graph_builder.build_graph(processed_sentences)
-    print(f"Graph built: {len(graph_data['nodes'])} nodes, {len(graph_data['edges'])} edges")
+        print("Building graph...")
+        graph_builder = GraphBuilder()
+        graph_data = graph_builder.build_graph(processed_sentences)
+        print(f"Graph built: {len(graph_data['nodes'])} nodes, {len(graph_data['edges'])} edges")
 
-    print("Running ant colony...")
-    colony = AntColony(graph_data)
-    result = colony.run()
+        print("Running ant colony...")
+        colony = AntColony(graph_data)
+        result = colony.run()
+        all_results.append(result)
 
-    print("\nFirst 20 selected senses:\n")
+        run_metrics = evaluate_with_gold(result, gold)
+
+        print("Run best global score:", colony.best_score)
+        print("Run number of nodes:", len(graph_data["nodes"]))
+        print("Run number of edges:", len(graph_data["edges"]))
+        print("Run number of ants created:", colony.ant_counter)
+        print("Run F1:", round(run_metrics["f1"], 4))
+
+    result = majority_vote_results(all_results)
+
+    print("\nFirst 20 selected senses after majority voting:\n")
     for _, data in list(result.items())[:20]:
         print(f"ID: {data['instance_id']}")
         print(f"Word: {data['word']}")
         print(f"Sense: {data['synset'].name()}")
         print(f"Definition: {data['definition']}")
-        print(f"Energy: {data['energy']}")
         print("-" * 50)
-
-    print("Best global score:", colony.best_score)
-    print("Number of nodes:", len(graph_data["nodes"]))
-    print("Number of edges:", len(graph_data["edges"]))
-    print("Number of ants created:", colony.ant_counter)
-
-    gold_sample = list(gold.keys())[:3]
-    result_ids = [d["instance_id"] for d in result.values() if d["instance_id"]][:3]
-    print("\nGold key sample:  ", gold_sample)
-    print("Result ID sample: ", result_ids)
 
     metrics = evaluate_with_gold(result, gold)
 
-    print("\nEvaluation:")
+    print("\nEvaluation after majority voting:")
     print("Total gold:", metrics["total_gold"])
     print("Total predicted:", metrics["total_predicted"])
     print("Correct:", metrics["correct"])
