@@ -4,8 +4,8 @@ This project implements a biologically inspired **Ant Colony Optimization (ACO)*
 
 The implementation is inspired by the paper:
 
-> *An Ant Colony Algorithm for Word Sense Disambiguation*  
-> by Ramdane Maamri and Kamel Smaïli
+> *Ant Colony Algorithm for the Unsupervised Word Sense Disambiguation of Texts: Comparison and Evaluation*  
+> by Didier SCHWAB, Jérôme GOULIAN, Andon TCHECHMEDJIEV and Hervé BLANCHON
 
 ## Results
 
