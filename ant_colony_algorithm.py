@@ -26,7 +26,7 @@ E0 = 30         # initial quantity of energy on each node
 OMEGA = 25      # ant life span
 LV = 100        # odour vector length
 DELTA_V = 0.9   # percentage of the odour vector components deposited by an ant when it arrives on a node
-C_AC = 50      # number of cycles of the simulation
+C_AC = 50       # number of cycles of the simulation
 THETA = 1.0     # quantity of deposited pheromone
 NUM_RUNS = 3    # number of independent executions for majority voting
 
@@ -193,9 +193,6 @@ def get_word_id(word):
 
     return word_to_id[word]
 
-# def tokenize_definition(text):
-#     return [token.lower() for token in word_tokenize(text) if token.isalpha()]
-
 STOPWORDS = {
     "the", "a", "an", "is", "are", "was", "were",
     "to", "of", "and", "or", "in", "on", "at",
@@ -242,8 +239,10 @@ def ext_lesk_nests(nest_vector1, nest_vector2):
     key = (id(nest_vector1), id(nest_vector2)) if id(nest_vector1) <= id(nest_vector2) \
         else (id(nest_vector2), id(nest_vector1))
     cached = _lesk_nest_cache.get(key)
+
     if cached is not None:
         return cached
+    
     result = len(set(nest_vector1).intersection(set(nest_vector2)))
     _lesk_nest_cache[key] = result
 
@@ -252,21 +251,17 @@ def ext_lesk_nests(nest_vector1, nest_vector2):
 
 # PREPROCESSING
 
-def penn_to_wordnet_pos(tag):
-    if tag.startswith("N"): return wn.NOUN
-    if tag.startswith("V"): return wn.VERB
-    if tag.startswith("J"): return wn.ADJ
-    if tag.startswith("R"): return wn.ADV
-
-    return None
-
 def semeval_pos_to_wordnet_pos(pos):
     if pos is None: return None
     pos = pos.lower()
-    if pos.startswith("n"): return wn.NOUN
-    if pos.startswith("v"): return wn.VERB
-    if pos.startswith("j") or pos.startswith("a"): return wn.ADJ
-    if pos.startswith("r"): return wn.ADV
+    if pos.startswith("n"): 
+        return wn.NOUN
+    if pos.startswith("v"): 
+        return wn.VERB
+    if pos.startswith("a"): 
+        return wn.ADJ
+    if pos.startswith("r"): 
+        return wn.ADV
 
     return None
 
@@ -293,32 +288,6 @@ def preprocess_semeval_text(semeval_text):
             processed_sentence.append({
                 "word": word.lower(),
                 "id": item["id"],
-                "pos": wn_pos,
-                "synsets": synsets
-            })
-        if processed_sentence:
-            processed_sentences.append(processed_sentence)
-
-    return processed_sentences
-
-def preprocess_text(text):
-    processed_sentences = []
-    for sentence in sent_tokenize(text):
-        tokens = word_tokenize(sentence)
-        tagged_tokens = pos_tag(tokens)
-        processed_sentence = []
-        for word, tag in tagged_tokens:
-            if not word.isalpha():
-                continue
-            wn_pos = penn_to_wordnet_pos(tag)
-            if wn_pos is None:
-                continue
-            synsets = wn.synsets(word.lower(), pos=wn_pos)
-            if not synsets:
-                continue
-            processed_sentence.append({
-                "word": word.lower(),
-                "id": None,
                 "pos": wn_pos,
                 "synsets": synsets
             })
@@ -367,9 +336,11 @@ class GraphBuilder:
 
     def build_graph(self, processed_sentences):
         text_node = self.create_node("text", "TEXT")
+        
         for sentence_index, sentence in enumerate(processed_sentences):
             sentence_node = self.create_node("sentence", f"sentence_{sentence_index}")
             self.connect(text_node, sentence_node)
+
             for word_data in sentence:
                 word = word_data["word"]
                 instance_id = word_data.get("id")
@@ -382,6 +353,7 @@ class GraphBuilder:
                     "word_node": word_node,
                     "nests": []
                 }
+
                 for synset in synsets:
                     nest = self.create_nest(synset, word, instance_id)
                     self.connect(word_node, nest)
@@ -421,9 +393,11 @@ class AntColony:
         existing = self.get_edge(nest1, nest2)
         if existing is not None:
             return existing
+        
         bridge = Bridge(nest1, nest2)
         bridge.add_pheromone(THETA)
         self.edges.append(bridge)
+
         nest1.add_neighbor(nest2)
         nest2.add_neighbor(nest1)
         key = (min(nest1.id, nest2.id), max(nest1.id, nest2.id))
@@ -452,6 +426,7 @@ class AntColony:
         for word_data in self.word_to_nests.values():
             for nest in word_data["nests"]:
                 probability = self.produce_ant_probability(nest)
+
                 if random.random() < probability and nest.energy >= 1:
                     nest.energy = nest.energy - 1
                     ant = Ant(
@@ -475,6 +450,7 @@ class AntColony:
     def collect_energy(self, ant):
         taken = ant.current_node.remove_energy(EA)
         ant.energy = ant.energy + taken
+
         if ant.energy > EMAX:
             extra = ant.energy - EMAX
             ant.energy = EMAX
@@ -506,29 +482,47 @@ class AntColony:
 
     def choose_next_node(self, ant):
         neighbors = [n for n in ant.current_node.neighbors if n != ant.previous_node]
+
         if not neighbors:
             neighbors = ant.current_node.neighbors
+
+        if not neighbors:
+            return None
+
+        neighbors = [n for n in neighbors if not self.is_enemy_nest(ant, n)]
+
         if not neighbors:
             return None
 
         candidates = []
 
         if ant.mode == "return":
-            similarities = [self._lesk_with_mother(n, ant.mother_nest) for n in neighbors]
+            similarities = [
+                self._lesk_with_mother(n, ant.mother_nest)
+                for n in neighbors
+            ]
             total_similarity = sum(similarities) + 1e-9
 
         for i, neighbor in enumerate(neighbors):
             edge = self.get_edge(ant.current_node, neighbor)
+
             if edge is None:
                 continue
+
             if ant.mode == "explore":
-                score = self.evaluate_explore_transition(neighbor, edge, neighbors)
+                score = self.evaluate_explore_transition(
+                    neighbor,
+                    edge,
+                    neighbors
+                )
+
             else:
                 score = self.evaluate_return_transition(
                     edge,
                     similarities[i],
                     total_similarity
                 )
+
             candidates.append((neighbor, score))
 
         if not candidates:
@@ -540,32 +534,35 @@ class AntColony:
             total_score = total_score + score
 
         if total_score <= 0:
-            return random.choice([node for node, score in candidates])
+            chosen_node = random.choice([node for node, _ in candidates])
+        else:
+            nodes = [node for node, _ in candidates]
+            weights = [score / total_score for _, score in candidates]
 
-        nodes = []
-        probabilities = []
-
-        for node, score in candidates:
-            probability = score / total_score
-
-            nodes.append(node)
-            probabilities.append(probability)
-
-        chosen_node = random.choices(nodes, weights=probabilities, k=1)[0]
+            chosen_node = random.choices(nodes, weights=weights, k=1)[0] # weighted random selection
 
         return chosen_node
 
     def move_ant(self, ant):
         if ant.mode == "explore":
             self.collect_energy(ant)
+
             if self.should_return_home(ant):
                 ant.switch_to_return_mode()
 
         next_node = self.choose_next_node(ant)
+
         if next_node is not None:
-            edge = self.get_edge(ant.current_node, next_node)
+            current_node = ant.current_node
+            edge = self.get_edge(current_node, next_node)
+
+            if self.is_potential_friend_nest(ant, next_node):
+                self.create_bridge(ant.mother_nest, next_node)
+                ant.switch_to_return_mode()
+
             if edge is not None:
                 edge.add_pheromone(THETA)
+
             ant.move_to(next_node)
 
         ant.decrease_lifespan()
@@ -611,6 +608,7 @@ class AntColony:
         for neighbor in current.neighbors:
             if self.is_potential_friend_nest(ant, neighbor):
                 score = ext_lesk_nests(ant.mother_nest.odour_vector, neighbor.odour_vector)
+                
                 if score > 0:
                     self.create_bridge(ant.mother_nest, neighbor)
                     ant.switch_to_return_mode()
@@ -662,18 +660,19 @@ class AntColony:
         for cycle in range(C_AC):
             if cycle % 10 == 0:
                 print(f"  Cycle {cycle}/{C_AC}, ants alive: {len(self.ants)}")
+
             self.remove_dead_ants()
             self.remove_collapsed_bridges()
             self.produce_ants()
             self.move_ants()
+
             for ant in self.ants:
                 self.deposit_odour_on_node(ant)
-                self.try_create_bridge(ant)
+
             self.evaporate_pheromones()
             self.update_best_configuration()
 
         return self.best_configuration
-
 
 # EVALUATION
 
@@ -696,7 +695,7 @@ def evaluate_with_gold(result, gold):
         if instance_id not in gold:
             continue
 
-        total_predicted += 1
+        total_predicted = total_predicted + 1
 
         predicted_keys = synset_to_sense_keys(data["synset"])
         gold_keys = gold[instance_id]
