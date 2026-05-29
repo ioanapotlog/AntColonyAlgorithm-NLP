@@ -31,18 +31,24 @@ THETA = 1.0     # quantity of deposited pheromone
 NUM_RUNS = 3    # number of independent executions for majority voting
 
 
+# LOAD DATA
+
 def load_semeval_xml(xml_path):
     tree = ET.parse(xml_path)
     root = tree.getroot()
     texts = []
     for text in root.iter("text"):
         text_sentences = []
+
         for sentence in text.iter("sentence"):
             sentence_words = []
+
             for element in sentence:
                 word = element.text
+
                 if word is None:
                     continue
+
                 sentence_words.append({
                     "word": word.lower(),
                     "id": element.attrib.get("id"),
@@ -105,6 +111,7 @@ class Node:
     def remove_energy(self, quantity):
         taken = min(self.energy, quantity)
         self.energy = self.energy - taken
+
         return taken
 
     def deposit_odour(self, odour_components):
@@ -304,9 +311,9 @@ class GraphBuilder:
         self.nodes = {}
         self.edges = []
 
-        self.edge_map = {}
+        self.edge_map = {} # (node1_id, node2_id) -> edge
         self.node_counter = 0
-        self.word_to_nests = {}
+        self.word_to_nests = {} # stores all candidate senses for that word
 
     def create_node(self, node_type, label=None):
         node = Node(self.node_counter, node_type, label)
@@ -407,16 +414,19 @@ class AntColony:
 
     def remove_collapsed_bridges(self):
         remaining_edges = []
+
         for edge in self.edges:
             if edge.is_bridge and edge.should_collapse():
                 key = (min(edge.node1.id, edge.node2.id), max(edge.node1.id, edge.node2.id))
                 self.edge_map.pop(key, None)
+
                 if edge.node2 in edge.node1.neighbors:
                     edge.node1.neighbors.remove(edge.node2)
                 if edge.node1 in edge.node2.neighbors:
                     edge.node2.neighbors.remove(edge.node1)
             else:
                 remaining_edges.append(edge)
+
         self.edges = remaining_edges
 
     def produce_ant_probability(self, nest):
@@ -565,6 +575,11 @@ class AntColony:
 
             ant.move_to(next_node)
 
+            if ant.mode == "return" and ant.current_node == ant.mother_nest:
+                ant.mother_nest.add_energy(ant.energy)
+                ant.energy = 0
+                ant.mode = "explore"
+
         ant.decrease_lifespan()
 
     def move_ants(self):
@@ -701,7 +716,7 @@ def evaluate_with_gold(result, gold):
         gold_keys = gold[instance_id]
 
         if any(key in gold_keys for key in predicted_keys):
-            correct += 1
+            correct = correct + 1
 
     precision = correct / total_predicted if total_predicted > 0 else 0
     recall = correct / total_gold if total_gold > 0 else 0
